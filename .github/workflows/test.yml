@@ -1,0 +1,78 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Install tools
+        run: make setup-dev
+
+      - name: Format check
+        run: make fmt && git diff --exit-code
+
+      - name: Lint
+        run: make lint
+
+      - name: Run unit tests
+        run: make test-unit
+
+  integration-tests:
+    name: Integration Tests (QEMU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Cache QEMU build
+        id: cache-qemu
+        uses: actions/cache@v4
+        with:
+          path: ~/qemu-build
+          key: ${{ runner.os }}-qemu-${{ hashFiles('.github/workflows/build-qemu.sh') }}
+
+      - name: Build QEMU from Source
+        if: steps.cache-qemu.outputs.cache-hit != 'true'
+        run: .github/workflows/build-qemu.sh
+
+      - name: Install QEMU dependencies
+        if: steps.cache-qemu.outputs.cache-hit == 'true'
+        run: sudo apt-get update && sudo apt-get install libfdt1
+
+      - name: Install QEMU
+        run: |
+          sudo cp -r ~/qemu-build/usr/local/* /usr/local/
+          echo "/usr/local/bin" >> "$GITHUB_PATH"
+
+      - name: Verify QEMU installation
+        run: |
+          qemu-system-x86_64 --version
+          qemu-img --version
+          which qemu-system-x86_64
+
+      - name: Validate VM setup
+        run: make validate-vm-setup
+
+      - name: Run integration tests
+        run: sudo make test-vm
+        timeout-minutes: 30

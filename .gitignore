@@ -1,0 +1,3 @@
+*.iso
+# Ignore reassembled QEMU disk image (will be built from parts)
+truenas/truenas.qcow2
