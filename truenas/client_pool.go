@@ -72,15 +72,15 @@ type Pool struct {
 
 // PoolScan represents pool scan information
 type PoolScan struct {
-	Function       string  `json:"function"`
-	State          string  `json:"state"`
-	StartTime      *int64  `json:"start_time"`
-	EndTime        *int64  `json:"end_time"`
-	Percentage     float64 `json:"percentage"`
-	BytesToProcess *int64  `json:"bytes_to_process"`
-	BytesProcessed *int64  `json:"bytes_processed"`
-	BytesIssued    *int64  `json:"bytes_issued"`
-	Errors         int     `json:"errors"`
+	Function       string       `json:"function"`
+	State          string       `json:"state"`
+	StartTime      *TrueNASTime `json:"start_time"`
+	EndTime        *TrueNASTime `json:"end_time"`
+	Percentage     float64      `json:"percentage"`
+	BytesToProcess *int64       `json:"bytes_to_process"`
+	BytesProcessed *int64       `json:"bytes_processed"`
+	BytesIssued    *int64       `json:"bytes_issued"`
+	Errors         int          `json:"errors"`
 }
 
 // PoolTopology represents pool topology structure (for reading)
