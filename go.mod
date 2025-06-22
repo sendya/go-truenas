@@ -3,9 +3,10 @@ module github.com/715d/go-truenas
 go 1.24
 
 require (
+	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/puzpuzpuz/xsync/v3 v3.5.1
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.10.0
 )
 
 require (

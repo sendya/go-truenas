@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -748,8 +749,17 @@ func TestClient_ConnectionHandshakeNoSession(t *testing.T) {
 
 func TestClient_ReadLoopErrorHandling(t *testing.T) {
 	t.Parallel()
-	// Server that sends malformed JSON
+
+	// Create server that will be closed after sending malformed JSON
+	var serverClosed atomic.Bool
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// If server is marked as closed, reject new connections
+		if serverClosed.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
@@ -774,6 +784,9 @@ func TestClient_ReadLoopErrorHandling(t *testing.T) {
 
 		// Send malformed JSON to trigger read error
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{invalid json`))
+
+		// Mark server as closed to prevent reconnection
+		serverClosed.Store(true)
 
 		// Keep connection open briefly then close unexpectedly
 		time.Sleep(100 * time.Millisecond)

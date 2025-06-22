@@ -688,14 +688,11 @@ func TestCronjobJSON(t *testing.T) {
 	t.Parallel()
 	t.Run("cronjob struct serialization", func(t *testing.T) {
 		cronjob := Cronjob{
-			ID:          1,
-			Enabled:     true,
-			Stderr:      false,
-			Stdout:      true,
-			Schedule:    Schedule{Minute: "0", Hour: "2", DOM: "*", Month: "*", DOW: "*"},
-			Command:     "/usr/bin/test.sh",
-			Description: "Test cronjob",
-			User:        "root",
+			ID:       1,
+			Enabled:  true,
+			Stderr:   false,
+			Stdout:   true,
+			Schedule: Schedule{Minute: "0", Hour: "2", DOM: "*", Month: "*", DOW: "*"},
 		}
 
 		// This would typically be tested with actual JSON marshaling
@@ -728,13 +725,12 @@ func TestCronjobRequestStructures(t *testing.T) {
 	t.Parallel()
 	t.Run("create request validation", func(t *testing.T) {
 		req := CronjobCreateRequest{
-			Enabled:     true,
-			Stderr:      true,
-			Stdout:      false,
-			Schedule:    NewHourlySchedule("0"),
-			Command:     "/usr/bin/hourly_task.sh",
-			Description: "Hourly maintenance task",
-			User:        "maintenance",
+			Enabled:  true,
+			Stderr:   true,
+			Stdout:   false,
+			Schedule: NewHourlySchedule("0"),
+			Command:  "/usr/bin/hourly_task.sh",
+			User:     "maintenance",
 		}
 
 		assert.True(t, req.Enabled)
@@ -768,22 +764,12 @@ func TestCronjobRequestStructures(t *testing.T) {
 	})
 
 	t.Run("update request with all values", func(t *testing.T) {
-		enabled := true
-		stderr := false
-		stdout := true
-		command := "/usr/bin/updated.sh"
-		description := "Updated description"
-		user := "newuser"
-		schedule := NewDailySchedule("3", "15")
-
 		req := CronjobUpdateRequest{
-			Enabled:     &enabled,
-			Stderr:      &stderr,
-			Stdout:      &stdout,
-			Schedule:    &schedule,
-			Command:     &command,
-			Description: &description,
-			User:        &user,
+			Enabled: Ptr(true),
+			Stderr:  Ptr(false),
+			Stdout:  Ptr(true),
+			Command: Ptr("/usr/bin/updated.sh"),
+			User:    Ptr("newuser"),
 		}
 
 		assert.NotNil(t, req.Enabled)

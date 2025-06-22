@@ -11,15 +11,17 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/gorilla/websocket"
 	"github.com/puzpuzpuz/xsync/v3"
 )
 
 type Options struct {
-	Username string
-	Password string
-	APIKey   string
-	Debug    bool
+	Username            string
+	Password            string
+	APIKey              string
+	Debug               bool
+	DefaultWriteTimeout time.Duration
 }
 
 type Client struct {
@@ -54,56 +56,14 @@ type Client struct {
 	conn        *websocket.Conn
 	opts        Options
 	mu          sync.RWMutex
-	writeMu     sync.Mutex
 	msgID       atomic.Int64
 	pending     *xsync.MapOf[string, chan Message]
+	writeChan   chan *Message
 	errCh       chan error
 	reconnectCh chan struct{}
+	doneCh      chan struct{} // Signal when client should shut down
 	closed      atomic.Bool
 	wg          sync.WaitGroup
-}
-
-type Message struct {
-	ID     string          `json:"id,omitempty"`
-	Msg    string          `json:"msg,omitempty"`
-	Method string          `json:"method,omitempty"`
-	Params []any           `json:"params,omitempty"`
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  *ErrorMsg       `json:"error,omitempty"`
-}
-
-func (m *Message) Unmarshal(v any) error {
-	if err := json.Unmarshal(m.Result, v); err != nil {
-		return fmt.Errorf("unmarshal result: %s: %w", string(m.Result), err)
-	}
-	return nil
-}
-
-type ErrorMsg struct {
-	Message string `json:"message,omitempty"`
-	Code    int    `json:"error,omitempty"`
-	Reason  string `json:"reason,omitempty"`
-	Type    string `json:"errorType,omitempty"`
-}
-
-func (e *ErrorMsg) Error() string {
-	var parts []string
-	if e.Code > 0 {
-		parts = append(parts, fmt.Sprintf("code: %d", e.Code))
-	}
-	if e.Message != "" {
-		parts = append(parts, fmt.Sprintf("message: %s", e.Message))
-	}
-	if e.Reason != "" {
-		parts = append(parts, fmt.Sprintf("reason: %s", e.Reason))
-	}
-	if e.Type != "" {
-		parts = append(parts, fmt.Sprintf("type: %s", e.Type))
-	}
-	if len(parts) == 0 {
-		return "TrueNAS API error"
-	}
-	return fmt.Sprintf("TrueNAS API error (%s)", strings.Join(parts, ", "))
 }
 
 // NewClient builds a new TrueNAS Client.
@@ -115,6 +75,10 @@ func NewClient(endpoint string, opts Options) (*Client, error) {
 		pending:     xsync.NewMapOf[string, chan Message](),
 		errCh:       make(chan error, 1),
 		reconnectCh: make(chan struct{}, 1),
+		doneCh:      make(chan struct{}),
+	}
+	if c.opts.DefaultWriteTimeout == 0 {
+		c.opts.DefaultWriteTimeout = 5 * time.Second
 	}
 
 	// Initialize type-safe API clients
@@ -158,6 +122,133 @@ func NewClient(endpoint string, opts Options) (*Client, error) {
 	return c, nil
 }
 
+func (c *Client) Close() error {
+	if !c.closed.CompareAndSwap(false, true) {
+		return nil // Already closed
+	}
+
+	// Cancel all pending requests by closing their channels
+	c.pending.Range(func(id string, ch chan Message) bool {
+		close(ch)
+		c.pending.Delete(id)
+		return true
+	})
+
+	c.mu.Lock()
+	if c.conn != nil {
+		// Set read deadline to immediately unblock any pending reads
+		_ = c.conn.SetReadDeadline(time.Now())
+		_ = c.conn.Close() // Ignore close errors - connection might already be closed
+		c.conn = nil
+	}
+	if c.writeChan != nil {
+		close(c.writeChan) // Signal writeLoop to exit
+		c.writeChan = nil
+	}
+	c.mu.Unlock()
+
+	close(c.doneCh)
+	close(c.reconnectCh)
+	c.wg.Wait()
+	return nil
+}
+
+// Call calls the requested method, passing an optional set of arguments.
+// If v is not nil, the result will be unmarshaled into it.
+// Prefer to use the type-safe API clients for normal operations.
+func (c *Client) Call(ctx context.Context, method string, params []any, v any) error {
+	msgID := fmt.Sprintf("%d", c.msgID.Add(1))
+	if _, ok := ctx.Deadline(); !ok {
+		// Context doesn't have a timeout, apply the default.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.opts.DefaultWriteTimeout)
+		defer cancel()
+	}
+
+	msg := &Message{
+		ID:     msgID,
+		Msg:    "method",
+		Method: method,
+		Params: params,
+	}
+	resultCh := make(chan Message, 1)
+
+	c.pending.Store(msgID, resultCh)
+	defer func() {
+		ch, ok := c.pending.LoadAndDelete(msgID)
+		if ok {
+			close(ch)
+		}
+	}()
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.writeChan == nil || c.closed.Load() {
+		return fmt.Errorf("not connected")
+	}
+
+	select {
+	case c.writeChan <- msg:
+		// Message queued successfully
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	select {
+	case err := <-c.errCh:
+		return err
+	case result, ok := <-resultCh:
+		if !ok {
+			// Channel was closed, client is shutting down
+			return fmt.Errorf("client closed")
+		}
+		if result.Error != nil {
+			return result.Error
+		}
+		if v != nil {
+			return result.Unmarshal(v)
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// CallJob calls a job method and waits for completion.
+// If v is not nil, the result will be unmarshaled into it.
+// Prefer to use the type-safe API clients for normal operations.
+func (c *Client) CallJob(ctx context.Context, method string, params []any, v any) error {
+	var jobID int
+	if err := c.Call(ctx, method, params, &jobID); err != nil {
+		return fmt.Errorf("call %s: %w", method, err)
+	}
+
+	job, err := c.Job.Wait(ctx, jobID)
+	if err != nil {
+		return fmt.Errorf("wait for job %d (%s): %w", jobID, method, err)
+	}
+
+	if v != nil && job.Result != nil {
+		resultBytes, err := json.Marshal(job.Result)
+		if err != nil {
+			return fmt.Errorf("marshal job result: %w", err)
+		}
+		if err := json.Unmarshal(resultBytes, v); err != nil {
+			return fmt.Errorf("unmarshal job result: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (c *Client) reconnect() error {
+	if err := c.connect(); err != nil {
+		return err
+	}
+	return c.authenticate()
+}
+
 func (c *Client) connect() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -184,10 +275,7 @@ func (c *Client) connect() error {
 	if c.opts.Debug {
 		fmt.Printf("send: %s\n", tryMarshal(msg))
 	}
-	c.writeMu.Lock()
-	err = conn.WriteJSON(msg)
-	c.writeMu.Unlock()
-	if err != nil {
+	if err := conn.WriteJSON(msg); err != nil {
 		conn.Close()
 		return fmt.Errorf("send connect request: %w", err)
 	}
@@ -212,6 +300,7 @@ func (c *Client) connect() error {
 		return fmt.Errorf("connected but did not receive a session")
 	}
 	c.conn = conn
+	c.writeChan = make(chan *Message, 256)
 	c.closed.Store(false)
 	return nil
 }
@@ -246,87 +335,6 @@ func (c *Client) authenticate() error {
 	return fmt.Errorf("auth unsuccessful")
 }
 
-func (c *Client) Call(ctx context.Context, method string, params []any, v any) error {
-	msgID := fmt.Sprintf("%d", c.msgID.Add(1))
-
-	msg := &Message{
-		ID:     msgID,
-		Msg:    "method",
-		Method: method,
-		Params: params,
-	}
-
-	resultCh := make(chan Message, 1)
-
-	c.pending.Store(msgID, resultCh)
-
-	defer func() {
-		c.pending.Delete(msgID)
-	}()
-
-	c.mu.RLock()
-	conn := c.conn
-	c.mu.RUnlock()
-
-	if conn == nil || c.closed.Load() {
-		return fmt.Errorf("not connected")
-	}
-
-	if c.opts.Debug {
-		fmt.Printf("send: %s\n", tryMarshal(msg))
-	}
-	c.writeMu.Lock()
-	err := conn.WriteJSON(msg)
-	c.writeMu.Unlock()
-	if err != nil {
-		return fmt.Errorf("send message: %s: %w", msgID, err)
-	}
-
-	select {
-	case err := <-c.errCh:
-		return err
-	case result, ok := <-resultCh:
-		if !ok {
-			// Channel was closed, client is shutting down
-			return fmt.Errorf("client closed")
-		}
-		if result.Error != nil {
-			return result.Error
-		}
-		if v != nil {
-			return result.Unmarshal(v)
-		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-// CallJob calls a job endpoint and waits for completion, returning the job result
-func (c *Client) CallJob(ctx context.Context, method string, params []any, v any) error {
-	var jobID int
-	if err := c.Call(ctx, method, params, &jobID); err != nil {
-		return fmt.Errorf("call %s: %w", method, err)
-	}
-
-	job, err := c.Job.Wait(ctx, jobID)
-	if err != nil {
-		return fmt.Errorf("wait for job %d (%s): %w", jobID, method, err)
-	}
-
-	if v != nil && job.Result != nil {
-		resultBytes, err := json.Marshal(job.Result)
-		if err != nil {
-			return fmt.Errorf("marshal job result: %w", err)
-		}
-		if err := json.Unmarshal(resultBytes, v); err != nil {
-			return fmt.Errorf("unmarshal job result: %w", err)
-		}
-	}
-
-	return nil
-}
-
 func (c *Client) connectionManager() {
 	defer c.wg.Done()
 	defer func() {
@@ -335,11 +343,18 @@ func (c *Client) connectionManager() {
 		}
 	}()
 
-	c.wg.Add(1)
+	c.wg.Add(2)
 	c.mu.RLock()
 	conn := c.conn
+	writeChan := c.writeChan
 	c.mu.RUnlock()
 	go c.readLoop(conn)
+	go c.writeLoop(conn, writeChan)
+
+	bo := backoff.NewExponentialBackOff()
+	bo.InitialInterval = 100 * time.Millisecond
+	bo.MaxInterval = 10 * time.Second
+	bo.MaxElapsedTime = 0
 
 	for !c.closed.Load() {
 		<-c.reconnectCh
@@ -352,30 +367,37 @@ func (c *Client) connectionManager() {
 		}
 
 		if err := c.reconnect(); err != nil {
-			if c.opts.Debug {
-				fmt.Printf("reconnection failed, retrying: %v\n", err)
-			}
 			if !c.closed.Load() {
-				// Wait briefly before retrying, but check for close frequently
-				<-time.After(100 * time.Millisecond)
-				if !c.closed.Load() {
-					select {
-					case c.reconnectCh <- struct{}{}:
-					default:
+				delay := bo.NextBackOff()
+				if c.opts.Debug {
+					fmt.Printf("reconnection failed, retrying in %s: %v\n", delay.String(), err)
+				}
+				select {
+				case <-time.After(delay):
+					if !c.closed.Load() {
+						select {
+						case c.reconnectCh <- struct{}{}:
+						default:
+						}
 					}
+				case <-c.doneCh:
+					return
 				}
 			}
 			continue
 		}
+		bo.Reset()
 		if c.opts.Debug {
 			fmt.Println("reconnected successfully")
 		}
 
-		c.wg.Add(1)
+		c.wg.Add(2)
 		c.mu.RLock()
 		conn := c.conn
+		writeChan := c.writeChan
 		c.mu.RUnlock()
 		go c.readLoop(conn)
+		go c.writeLoop(conn, writeChan)
 	}
 }
 
@@ -408,7 +430,11 @@ func (c *Client) readLoop(conn *websocket.Conn) {
 				}
 				select {
 				case c.reconnectCh <- struct{}{}:
+					// Successfully signaled reconnection
+				case <-c.doneCh:
+					// Client is shutting down
 				default:
+					// Channel is full, ignore
 				}
 				return
 			}
@@ -433,35 +459,45 @@ func (c *Client) readLoop(conn *websocket.Conn) {
 	}
 }
 
-func (c *Client) reconnect() error {
-	if err := c.connect(); err != nil {
-		return err
+func (c *Client) writeLoop(conn *websocket.Conn, messages <-chan *Message) {
+	defer c.wg.Done()
+	defer func() {
+		if c.opts.Debug {
+			fmt.Println("writeLoop exiting")
+		}
+	}()
+
+	if conn == nil {
+		return
 	}
-	return c.authenticate()
-}
 
-func (c *Client) Close() error {
-	c.closed.Store(true)
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
 
-	// Cancel all pending requests by closing their channels
-	c.pending.Range(func(id string, ch chan Message) bool {
-		close(ch)
-		c.pending.Delete(id)
-		return true
-	})
-
-	c.mu.Lock()
-	if c.conn != nil {
-		// Set read deadline to immediately unblock any pending reads
-		_ = c.conn.SetReadDeadline(time.Now())
-		_ = c.conn.Close() // Ignore close errors - connection might already be closed
-		c.conn = nil
+	for {
+		select {
+		case msg, ok := <-messages:
+			if !ok {
+				return
+			}
+			if c.opts.Debug {
+				fmt.Printf("send: %s\n", tryMarshal(msg))
+			}
+			if err := conn.WriteJSON(msg); err != nil {
+				if c.opts.Debug {
+					fmt.Printf("writeLoop error: %v\n", err)
+				}
+				return
+			}
+		case <-ticker.C:
+			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second)); err != nil {
+				if c.opts.Debug {
+					fmt.Printf("ping error: %v\n", err)
+				}
+				return
+			}
+		}
 	}
-	c.mu.Unlock()
-
-	close(c.reconnectCh)
-	c.wg.Wait()
-	return nil
 }
 
 func tryMarshal(v any) string {
@@ -479,4 +515,47 @@ func value[T any](v *T) T {
 		return zero
 	}
 	return *v
+}
+
+type Message struct {
+	ID     string          `json:"id,omitempty"`
+	Msg    string          `json:"msg,omitempty"`
+	Method string          `json:"method,omitempty"`
+	Params []any           `json:"params,omitempty"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  *ErrorMsg       `json:"error,omitempty"`
+}
+
+func (m *Message) Unmarshal(v any) error {
+	if err := json.Unmarshal(m.Result, v); err != nil {
+		return fmt.Errorf("unmarshal result: %s: %w", string(m.Result), err)
+	}
+	return nil
+}
+
+type ErrorMsg struct {
+	Message string `json:"message,omitempty"`
+	Code    int    `json:"error,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	Type    string `json:"errorType,omitempty"`
+}
+
+func (e *ErrorMsg) Error() string {
+	var parts []string
+	if e.Code > 0 {
+		parts = append(parts, fmt.Sprintf("code: %d", e.Code))
+	}
+	if e.Message != "" {
+		parts = append(parts, fmt.Sprintf("message: %s", e.Message))
+	}
+	if e.Reason != "" {
+		parts = append(parts, fmt.Sprintf("reason: %s", e.Reason))
+	}
+	if e.Type != "" {
+		parts = append(parts, fmt.Sprintf("type: %s", e.Type))
+	}
+	if len(parts) == 0 {
+		return "TrueNAS API error"
+	}
+	return fmt.Sprintf("TrueNAS API error (%s)", strings.Join(parts, ", "))
 }

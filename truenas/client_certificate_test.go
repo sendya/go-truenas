@@ -741,17 +741,11 @@ func TestCertificateExtensions_BasicConstraints(t *testing.T) {
 func TestCertificateExtensions_KeyUsage(t *testing.T) {
 	t.Parallel()
 	ku := &KeyUsage{
-		Enabled:           true,
-		DigitalSignature:  true,
-		ContentCommitment: false,
-		KeyEncipherment:   true,
-		DataEncipherment:  false,
-		KeyAgreement:      false,
-		KeyCertSign:       true,
-		CRLSign:           true,
-		EncipherOnly:      false,
-		DecipherOnly:      false,
-		ExtensionCritical: false,
+		Enabled:          true,
+		DigitalSignature: true,
+		KeyEncipherment:  true,
+		KeyCertSign:      true,
+		CRLSign:          true,
 	}
 
 	assert.True(t, ku.Enabled)
