@@ -25,23 +25,19 @@ func TestAppClient_Methods(t *testing.T) {
 }
 
 func TestAppState_Constants(t *testing.T) {
-	// Test that our AppState constants are defined correctly
+	// Test that our AppState constants are defined correctly according to TrueNAS API
 	states := []AppState{
+		AppStateCrashed,
+		AppStateDeploying,
 		AppStateRunning,
 		AppStateStopped,
-		AppStateDeploying,
-		AppStateError,
-		AppStateUpgrading,
-		AppStatePending,
 	}
 
 	expected := []string{
+		"CRASHED",
+		"DEPLOYING",
 		"RUNNING",
 		"STOPPED",
-		"DEPLOYING",
-		"ERROR",
-		"UPGRADING",
-		"PENDING",
 	}
 
 	for i, state := range states {
@@ -52,16 +48,15 @@ func TestAppState_Constants(t *testing.T) {
 }
 
 func TestApp_StructFields(t *testing.T) {
-	// Test that App struct has all expected fields
+	// Test that App struct has all expected fields according to TrueNAS API
 	app := App{
-		ID:           "test-app",
-		Name:         "Test App",
-		State:        AppStateRunning,
-		Version:      "1.0.0",
-		ChartName:    "test-chart",
-		Namespace:    "ix-test",
-		Catalog:      "TRUENAS",
-		CatalogTrain: "stable",
+		ID:               "test-app",
+		Name:             "Test App",
+		State:            AppStateRunning,
+		Version:          "1.0.0",
+		HumanVersion:     "1.0.0",
+		UpgradeAvailable: false,
+		Metadata:         map[string]interface{}{},
 	}
 
 	if app.ID != "test-app" {
@@ -73,6 +68,8 @@ func TestApp_StructFields(t *testing.T) {
 	}
 }
 
+// TestAppClient_List is an integration test that requires a live TrueNAS instance
+// Uncomment and set proper environment variables to run integration tests
 func TestAppClient_List(t *testing.T) {
 	endpoint := os.Getenv("TRUENAS_ENDPOINT")
 	apiKey := os.Getenv("TRUENAS_API_KEY")

@@ -15,43 +15,66 @@ func NewAppClient(client *Client) *AppClient {
 	return &AppClient{client: client}
 }
 
-// AppState represents the current state of an application
+// AppState represents the current state of an application according to TrueNAS API
 type AppState string
 
 const (
+	AppStateCrashed   AppState = "CRASHED"
+	AppStateDeploying AppState = "DEPLOYING"
 	AppStateRunning   AppState = "RUNNING"
 	AppStateStopped   AppState = "STOPPED"
-	AppStateDeploying AppState = "DEPLOYING"
-	AppStateError     AppState = "ERROR"
-	AppStateUpgrading AppState = "UPGRADING"
-	AppStatePending   AppState = "PENDING"
 )
 
-// App represents a TrueNAS application
+// App represents a TrueNAS application according to official API documentation
 type App struct {
-	ID           string                 `json:"id"`
-	Name         string                 `json:"name"`
-	State        AppState               `json:"state"`
-	Version      string                 `json:"version"`
-	Upgrade      *bool                  `json:"upgrade,omitempty"`
-	ChartName    string                 `json:"chart_name"`
-	Namespace    string                 `json:"namespace"`
-	Catalog      string                 `json:"catalog"`
-	CatalogTrain string                 `json:"catalog_train"`
-	Config       map[string]interface{} `json:"config,omitempty"`
-	History      []AppHistory           `json:"history,omitempty"`
-	Resources    *AppResources          `json:"resources,omitempty"`
-	Metadata     *AppMetadata           `json:"metadata,omitempty"`
-	Notes        string                 `json:"notes,omitempty"`
-	Description  string                 `json:"description,omitempty"`
-	Icon         string                 `json:"icon,omitempty"`
-	Maintainers  []AppMaintainer        `json:"maintainers,omitempty"`
-	Sources      []string               `json:"sources,omitempty"`
-	Home         string                 `json:"home,omitempty"`
-	Keywords     []string               `json:"keywords,omitempty"`
+	Name             string                 `json:"name"`
+	ID               string                 `json:"id"`
+	State            AppState               `json:"state"`
+	UpgradeAvailable bool                   `json:"upgrade_available"`
+	HumanVersion     string                 `json:"human_version"`
+	Version          string                 `json:"version"`
+	Metadata         map[string]interface{} `json:"metadata"`
+	ActiveWorkloads  *AppActiveWorkloads    `json:"active_workloads"`
 }
 
-// AppHistory represents an app's deployment history entry
+// AppActiveWorkloads represents active workloads according to TrueNAS API documentation
+type AppActiveWorkloads struct {
+	Containers       int                  `json:"containers"`
+	UsedPorts        []AppUsedPort        `json:"used_ports"`
+	ContainerDetails []AppContainerDetail `json:"container_details"`
+	Volumes          []AppVolume          `json:"volumes"`
+}
+
+// AppUsedPort represents a port used by the app
+type AppUsedPort struct {
+	ContainerPort int32         `json:"container_port"`
+	Protocol      string        `json:"protocol"`
+	HostPorts     []AppHostPort `json:"host_ports"`
+}
+
+// AppHostPort represents a host port mapping
+type AppHostPort struct {
+	HostPort int32  `json:"host_port"`
+	HostIP   string `json:"host_ip"`
+}
+
+// AppContainerDetail represents detailed container information
+type AppContainerDetail struct {
+	ID           string        `json:"id"`
+	ServiceName  string        `json:"service_name"`
+	Image        string        `json:"image"`
+	PortConfig   []interface{} `json:"port_config"`
+	State        string        `json:"state"` // "running", "starting", "exited"
+	VolumeMounts []interface{} `json:"volume_mounts"`
+}
+
+// AppVolume represents volume information for the app
+type AppVolume struct {
+	Source      string `json:"source"`
+	Destination string `json:"destination"`
+	Mode        string `json:"mode"`
+	Type        string `json:"type"`
+}
 type AppHistory struct {
 	Revision    int                    `json:"revision"`
 	UpdatedAt   *TrueNASTime           `json:"updated"`
@@ -219,7 +242,7 @@ func (a *AppClient) ListDeploying(ctx context.Context) ([]App, error) {
 	return a.QueryByState(ctx, AppStateDeploying)
 }
 
-// ListWithErrors returns all applications in error state
-func (a *AppClient) ListWithErrors(ctx context.Context) ([]App, error) {
-	return a.QueryByState(ctx, AppStateError)
+// ListCrashed returns all applications in crashed state
+func (a *AppClient) ListCrashed(ctx context.Context) ([]App, error) {
+	return a.QueryByState(ctx, AppStateCrashed)
 }

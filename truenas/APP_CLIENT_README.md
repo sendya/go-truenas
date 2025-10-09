@@ -1,6 +1,6 @@
 # TrueNAS Go Client - Application Management
 
-This document provides details on using the AppClient for managing TrueNAS applications.
+This document provides details on using the AppClient for managing TrueNAS applications based on the official TrueNAS API documentation.
 
 ## AppClient Usage Examples
 
@@ -14,7 +14,7 @@ if err != nil {
 }
 
 for _, app := range apps {
-    fmt.Printf("App: %s, State: %s, Version: %s\n", app.Name, app.State, app.Version)
+    fmt.Printf("App: %s, State: %s, Version: %s\n", app.Name, app.State, app.HumanVersion)
 }
 
 // Get a specific app by name
@@ -33,24 +33,19 @@ if err != nil {
 
 ### Filtering Apps
 
-```go
+````go
 // Get running apps
 runningApps, err := client.App.ListRunning(ctx)
 
 // Get stopped apps
 stoppedApps, err := client.App.ListStopped(ctx)
 
-// Get apps in error state
-errorApps, err := client.App.ListWithErrors(ctx)
-
-// Filter by catalog
-truenasApps, err := client.App.QueryByCatalog(ctx, "TRUENAS")
+// Get apps in crashed state
+crashedApps, err := client.App.ListCrashed(ctx)
 
 // Filter by state
 deployingApps, err := client.App.QueryByState(ctx, truenas.AppStateDeploying)
-```
-
-### Advanced Queries
+```### Advanced Queries
 
 ```go
 // Custom filters
@@ -64,39 +59,44 @@ options := &truenas.AppQueryOptions{
     },
 }
 apps, err := client.App.QueryWithFilters(ctx, filters, options)
-```
+````
 
 ## App States
 
-The following app states are available:
+The following app states are available according to TrueNAS API documentation:
 
+- `AppStateCrashed` - App has crashed
+- `AppStateDeploying` - App is being deployed
 - `AppStateRunning` - App is running normally
 - `AppStateStopped` - App is stopped
-- `AppStateDeploying` - App is being deployed
-- `AppStateError` - App is in error state
-- `AppStateUpgrading` - App is being upgraded
-- `AppStatePending` - App deployment is pending
 
 ## App Structure
 
-The `App` struct contains comprehensive information about TrueNAS applications:
+The `App` struct contains information about TrueNAS applications based on the official API schema:
 
 ```go
 type App struct {
-    ID          string                 `json:"id"`
-    Name        string                 `json:"name"`
-    State       AppState               `json:"state"`
-    Version     string                 `json:"version"`
-    Upgrade     *bool                  `json:"upgrade,omitempty"`
-    ChartName   string                 `json:"chart_name"`
-    Namespace   string                 `json:"namespace"`
-    Catalog     string                 `json:"catalog"`
-    CatalogTrain string                `json:"catalog_train"`
-    Config      map[string]interface{} `json:"config,omitempty"`
-    History     []AppHistory           `json:"history,omitempty"`
-    Resources   *AppResources          `json:"resources,omitempty"`
-    Metadata    *AppMetadata           `json:"metadata,omitempty"`
-    // ... additional fields
+    Name             string                 `json:"name"`
+    ID               string                 `json:"id"`
+    State            AppState               `json:"state"`
+    UpgradeAvailable bool                   `json:"upgrade_available"`
+    HumanVersion     string                 `json:"human_version"`
+    Version          string                 `json:"version"`
+    Metadata         map[string]interface{} `json:"metadata"`
+    ActiveWorkloads  *AppActiveWorkloads    `json:"active_workloads"`
+}
+```
+
+### Active Workloads
+
+The `ActiveWorkloads` field provides detailed runtime information:
+
+```go
+type AppActiveWorkloads struct {
+    Containers       int                   `json:"containers"`
+    UsedPorts        []AppUsedPort         `json:"used_ports"`
+    ContainerDetails []AppContainerDetail  `json:"container_details"`
+    Volumes          []AppVolume           `json:"volumes"`
 }
 ```
 
