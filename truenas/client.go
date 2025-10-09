@@ -2,6 +2,7 @@ package truenas
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -50,6 +51,7 @@ type Client struct {
 	APIKey       *APIKeyClient
 	Filesystem   *FilesystemClient
 	Sharing      *SharingClient
+	App          *AppClient
 
 	// Internal state
 	url         string
@@ -106,6 +108,7 @@ func NewClient(endpoint string, opts Options) (*Client, error) {
 	c.APIKey = NewAPIKeyClient(c)
 	c.Filesystem = NewFilesystemClient(c)
 	c.Sharing = NewSharingClient(c)
+	c.App = NewAppClient(c)
 
 	if err := c.connect(); err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
@@ -257,9 +260,12 @@ func (c *Client) connect() error {
 	if err != nil {
 		return fmt.Errorf("invalid URL: %w", err)
 	}
-
-	dialer := &websocket.Dialer{
-		HandshakeTimeout: 5 * time.Second,
+	dialer := websocket.Dialer{
+		Proxy:            http.ProxyFromEnvironment,
+		HandshakeTimeout: c.opts.DefaultWriteTimeout,
+	}
+	if u.Scheme == "wss" {
+		dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // Disable SSL verification for wss
 	}
 
 	conn, _, err := dialer.Dial(u.String(), http.Header{})
