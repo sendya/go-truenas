@@ -77,6 +77,7 @@ func TestAppClient_List(t *testing.T) {
 
 	client, err := NewClient(endpoint, Options{
 		APIKey: apiKey,
+		Debug:  false,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -88,14 +89,22 @@ func TestAppClient_List(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	apps, err := client.App.List(ctx)
-	if err != nil {
+	if err := client.App.SubscribeStats(ctx, func(apps []AppStats) error {
+		for _, app := range apps {
+			t.Logf("App: %s, CPU Usage: %.2f%%, Memory: %dMiB \n", app.AppName, app.CPUUsage, app.Memory/1024/1024)
+		}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 
-	for _, app := range apps {
-		t.Logf("App: %s, State: %s, Version: %s\n", app.Name, app.State, app.Version)
+	time.Sleep(8 * time.Second)
+
+	if err := client.App.UnsubscribeStats(context.Background()); err != nil {
+		t.Fatal(err)
 	}
+
+	time.Sleep(5 * time.Second)
 }
 
 func ExampleAppClient_Get() {

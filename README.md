@@ -30,7 +30,7 @@ import (
     "fmt"
     "log"
     "time"
-    
+
     "github.com/715d/go-truenas/truenas"
 )
 
@@ -44,11 +44,11 @@ func main() {
         log.Fatal(err)
     }
     defer client.Close()
-    
+
     // Use context with timeout for operations
     ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
     defer cancel()
-    
+
     // Get system information using type-safe client methods
     info, err := client.System.GetInfo(ctx)
     if err != nil {
@@ -60,7 +60,7 @@ func main() {
         }
         return
     }
-    
+
     fmt.Printf("TrueNAS %s on %s (uptime: %s)\n", info.Version, info.Hostname, info.Uptime)
 }
 ```
@@ -104,6 +104,14 @@ datasetReq := truenas.DatasetCreateRequest{
     Aclmode: truenas.Ptr(truenas.AclModePassthrough),
 }
 dataset, err := client.Dataset.Create(ctx, datasetReq)
+
+// Retrieve application statistics (CPU, memory, network, blkio)
+stats, err := client.App.Stats(ctx, &truenas.AppStatsOptions{Interval: 5})
+if err == nil {
+    for _, s := range stats {
+        fmt.Printf("%s: CPU %d%%, Memory %d bytes\n", s.AppName, s.CPUUsage, s.Memory)
+    }
+}
 ```
 
 ### Low-Level API Access
@@ -134,10 +142,11 @@ Before contributing, ensure you have the following installed:
 ### Initial Setup
 
 1. **Clone the repository with Git LFS support:**
+
    ```bash
    git clone https://github.com/715d/go-truenas.git
    cd go-truenas
-   
+
    # Initialize Git LFS and download VM images
    git lfs install
    git lfs pull
@@ -160,10 +169,11 @@ Before contributing, ensure you have the following installed:
    make lint
    ```
 4. **Run tests:**
+
    ```bash
    # Quick checks (unit tests only)
    make check
-   
+
    # Full validation including VM tests
    make check-full
    ```
@@ -189,44 +199,48 @@ As new versions of TrueNAS Scale are released, we may need to update the QCOW2 i
 1. Download the [latest TrueNAS Scale installation ISO](https://www.truenas.com/download-truenas-community-edition/).
 2. Create a blank disk image
 
-    ```sh
-    qemu-img create -f qcow2 truenas.qcow2 16G
-    ```
+   ```sh
+   qemu-img create -f qcow2 truenas.qcow2 16G
+   ```
+
 3. Launch a VM using that disk and ISO.
 
-    ```sh
-    qemu-system-x86_64 -m 8192 -smp 10 -hda truenas.qcow2 -cdrom truenas.iso -boot d -netdev user,id=net0,hostfwd=tcp::65525-:80,hostfwd=tcp::65526-:443 -device virtio-net,netdev=net0
-    ```
+   ```sh
+   qemu-system-x86_64 -m 8192 -smp 10 -hda truenas.qcow2 -cdrom truenas.iso -boot d -netdev user,id=net0,hostfwd=tcp::65525-:80,hostfwd=tcp::65526-:443 -device virtio-net,netdev=net0
+   ```
+
 4. Go through the installation process and configure the admin credentials to match the integration test (or update accordingly). Do not enable EFI.
 5. Configure the GRUB loader to have no wait and to default to booting TrueNAS immediately.
 
-    ```sh
-    sudo nano /etc/default/grub.d/zz-custom.cfg
-    # GRUB_TIMEOUT=0
-    # GRUB_DEFAULT=0
-    sudo upgrade-grub
-    reboot
-    ```
+   ```sh
+   sudo nano /etc/default/grub.d/zz-custom.cfg
+   # GRUB_TIMEOUT=0
+   # GRUB_DEFAULT=0
+   sudo upgrade-grub
+   reboot
+   ```
+
 6. Shutdown the VM.
 7. Split the image for Git LFS compatibility:
 
-    ```sh
-    # Remove old split files if they exist
-    rm -f truenas/truenas.qcow2.part*
+   ```sh
+   # Remove old split files if they exist
+   rm -f truenas/truenas.qcow2.part*
 
-    # Split the new image into 512M chunks
-    cd truenas
-    split -b 512M truenas.qcow2 truenas.qcow2.part
+   # Split the new image into 512M chunks
+   cd truenas
+   split -b 512M truenas.qcow2 truenas.qcow2.part
 
-    # Remove the original large file (it will be reassembled automatically during tests)
-    rm truenas.qcow2
-    ```
+   # Remove the original large file (it will be reassembled automatically during tests)
+   rm truenas.qcow2
+   ```
+
 8. Commit the split files:
 
-    ```sh
-    git add truenas/truenas.qcow2.part*
-    git commit -m "Update TrueNAS VM image to [version]"
-    ```
+   ```sh
+   git add truenas/truenas.qcow2.part*
+   git commit -m "Update TrueNAS VM image to [version]"
+   ```
 
 The test framework will automatically reassemble the split files (`truenas.qcow2.partaa`, `truenas.qcow2.partab`, etc.) into the full `truenas.qcow2` image before starting the VM.
 
@@ -239,6 +253,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 This repository includes a TrueNAS SCALE virtual machine image (`truenas/truenas.qcow2`) for integration testing purposes.
 
 **TrueNAS SCALE Attribution:**
+
 - TrueNAS SCALE is developed by iXsystems, Inc.
 - Version: TrueNAS-SCALE-23.10.2 (approximate)
 - Website: https://www.truenas.com/

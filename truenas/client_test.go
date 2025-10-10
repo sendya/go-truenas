@@ -85,9 +85,12 @@ func TestMessage_JSON(t *testing.T) {
 	err = json.Unmarshal(data, &decoded)
 	require.NoError(t, err)
 
+	p1 := msg.Params.([]any)
+	p2 := decoded.Params.([]any)
+
 	assert.Equal(t, msg.ID, decoded.ID)
 	assert.Equal(t, msg.Method, decoded.Method)
-	assert.Equal(t, len(msg.Params), len(decoded.Params))
+	assert.Equal(t, len(p1), len(p2))
 }
 
 func TestReconnection_CloseDetection(t *testing.T) {
@@ -829,7 +832,7 @@ func TestClient_CallJobErrorHandling(t *testing.T) {
 		case "test.job.marshal_error":
 			response.Result = json.RawMessage(`456`) // Return job ID
 		case "core.get_jobs":
-			params := msg.Params
+			params := msg.Params.([]any)
 			var jobID float64
 
 			// Parse the filter parameters to extract the job ID

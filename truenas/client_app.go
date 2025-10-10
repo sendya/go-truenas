@@ -2,6 +2,7 @@ package truenas
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 )
 
@@ -91,6 +92,11 @@ type AppResources struct {
 	Storage    []AppStorage   `json:"storage,omitempty"`
 }
 
+// AppStatsOptions represents the optional parameters for app.stats
+type AppStatsOptions struct {
+	Interval int `json:"interval,omitempty"`
+}
+
 // AppContainer represents a container within an app
 type AppContainer struct {
 	Name    string            `json:"name"`
@@ -116,6 +122,28 @@ type AppStorage struct {
 type AppResourceUsage struct {
 	Used  string `json:"used"`
 	Limit string `json:"limit,omitempty"`
+}
+
+// AppStats represents statistics for a TrueNAS application
+type AppStats struct {
+	AppName  string            `json:"app_name"`
+	CPUUsage float64           `json:"cpu_usage"`
+	Memory   int64             `json:"memory"`
+	Networks []AppStatsNetwork `json:"networks"`
+	Blkio    *AppStatsBlkio    `json:"blkio"`
+}
+
+// AppStatsNetwork represents per-interface network statistics for an app
+type AppStatsNetwork struct {
+	InterfaceName string `json:"interface_name"`
+	RXBytes       int64  `json:"rx_bytes"`
+	TXBytes       int64  `json:"tx_bytes"`
+}
+
+// AppStatsBlkio represents block I/O statistics for an app
+type AppStatsBlkio struct {
+	Read  int64 `json:"read"`
+	Write int64 `json:"write"`
 }
 
 // AppMetadata represents app metadata information
@@ -245,4 +273,17 @@ func (a *AppClient) ListDeploying(ctx context.Context) ([]App, error) {
 // ListCrashed returns all applications in crashed state
 func (a *AppClient) ListCrashed(ctx context.Context) ([]App, error) {
 	return a.QueryByState(ctx, AppStateCrashed)
+}
+
+// Stats retrieves statistics for all applications
+func (a *AppClient) SubscribeStats(ctx context.Context, fn func([]AppStats) error) error {
+	return a.client.Subscribe.Subscribe(ctx, "app.stats", func(m Message) error {
+		var result []AppStats
+		_ = json.Unmarshal(m.Fields, &result)
+		return fn(result)
+	})
+}
+
+func (a *AppClient) UnsubscribeStats(ctx context.Context) error {
+	return a.client.Subscribe.Unsubscribe(ctx, "app.stats")
 }

@@ -52,6 +52,8 @@ type Client struct {
 	Filesystem   *FilesystemClient
 	Sharing      *SharingClient
 	App          *AppClient
+	// Subscription client
+	Subscribe *ClientSubscribe
 
 	// Internal state
 	url         string
@@ -109,6 +111,7 @@ func NewClient(endpoint string, opts Options) (*Client, error) {
 	c.Filesystem = NewFilesystemClient(c)
 	c.Sharing = NewSharingClient(c)
 	c.App = NewAppClient(c)
+	c.Subscribe = NewClientSubscribe(c)
 
 	if err := c.connect(); err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
@@ -421,6 +424,10 @@ func (c *Client) readLoop(conn *websocket.Conn) {
 
 	for !c.closed.Load() {
 		var msg Message
+
+		// _, buf, err := conn.ReadMessage()
+		// _ = json.Unmarshal(buf, &msg)
+
 		if err := conn.ReadJSON(&msg); err != nil {
 			if c.closed.Load() {
 				return
@@ -459,6 +466,12 @@ func (c *Client) readLoop(conn *websocket.Conn) {
 
 		if msg.ID != "" {
 			if ch, exists := c.pending.Load(msg.ID); exists {
+				ch <- msg
+			}
+		}
+		// Event `collection_update`
+		if msg.Collection != "" {
+			if ch, exists := c.pending.Load(msg.Collection); exists {
 				ch <- msg
 			}
 		}
@@ -524,12 +537,14 @@ func value[T any](v *T) T {
 }
 
 type Message struct {
-	ID     string          `json:"id,omitempty"`
-	Msg    string          `json:"msg,omitempty"`
-	Method string          `json:"method,omitempty"`
-	Params []any           `json:"params,omitempty"`
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  *ErrorMsg       `json:"error,omitempty"`
+	ID         string          `json:"id,omitempty"`
+	Msg        string          `json:"msg,omitempty"`
+	Method     string          `json:"method,omitempty"`
+	Params     any             `json:"params,omitempty"`
+	Result     json.RawMessage `json:"result,omitempty"`
+	Error      *ErrorMsg       `json:"error,omitempty"`
+	Collection string          `json:"collection,omitempty"` // core.subscribe
+	Fields     json.RawMessage `json:"fields,omitempty"`
 }
 
 func (m *Message) Unmarshal(v any) error {
