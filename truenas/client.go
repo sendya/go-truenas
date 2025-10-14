@@ -23,6 +23,7 @@ type Options struct {
 	APIKey              string
 	Debug               bool
 	DefaultWriteTimeout time.Duration
+	DefaultLogger       Logger
 }
 
 type Client struct {
@@ -56,6 +57,7 @@ type Client struct {
 	Subscribe *ClientSubscribe
 
 	// Internal state
+	logger      Logger
 	url         string
 	conn        *websocket.Conn
 	opts        Options
@@ -74,6 +76,7 @@ type Client struct {
 // Close() should be called to clean up resources when the client is no longer needed.
 func NewClient(endpoint string, opts Options) (*Client, error) {
 	c := &Client{
+		logger:      &defaultLogger{},
 		url:         endpoint,
 		opts:        opts,
 		pending:     xsync.NewMapOf[string, chan Message](),
@@ -83,6 +86,9 @@ func NewClient(endpoint string, opts Options) (*Client, error) {
 	}
 	if c.opts.DefaultWriteTimeout == 0 {
 		c.opts.DefaultWriteTimeout = 5 * time.Second
+	}
+	if c.opts.DefaultLogger != nil {
+		c.logger = c.opts.DefaultLogger
 	}
 
 	// Initialize type-safe API clients
@@ -282,7 +288,7 @@ func (c *Client) connect() error {
 		"support": []string{"1"},
 	}
 	if c.opts.Debug {
-		fmt.Printf("send: %s\n", tryMarshal(msg))
+		c.logger.Printf("send: %s\n", tryMarshal(msg))
 	}
 	if err := conn.WriteJSON(msg); err != nil {
 		conn.Close()
@@ -298,7 +304,7 @@ func (c *Client) connect() error {
 		return fmt.Errorf("read connection response: %w", err)
 	}
 	if c.opts.Debug {
-		fmt.Printf("recv: %s\n", tryMarshal(resp))
+		c.logger.Printf("recv: %s\n", tryMarshal(resp))
 	}
 	if !strings.EqualFold(resp.Msg, "connected") {
 		conn.Close()
@@ -348,7 +354,7 @@ func (c *Client) connectionManager() {
 	defer c.wg.Done()
 	defer func() {
 		if c.opts.Debug {
-			fmt.Println("connectionManager exiting")
+			c.logger.Println("connectionManager exiting")
 		}
 	}()
 
@@ -372,14 +378,14 @@ func (c *Client) connectionManager() {
 		}
 
 		if c.opts.Debug {
-			fmt.Println("attempting to reconnect...")
+			c.logger.Println("attempting to reconnect...")
 		}
 
 		if err := c.reconnect(); err != nil {
 			if !c.closed.Load() {
 				delay := bo.NextBackOff()
 				if c.opts.Debug {
-					fmt.Printf("reconnection failed, retrying in %s: %v\n", delay.String(), err)
+					c.logger.Printf("reconnection failed, retrying in %s: %v\n", delay.String(), err)
 				}
 				select {
 				case <-time.After(delay):
@@ -397,7 +403,7 @@ func (c *Client) connectionManager() {
 		}
 		bo.Reset()
 		if c.opts.Debug {
-			fmt.Println("reconnected successfully")
+			c.logger.Println("reconnected successfully")
 		}
 
 		c.wg.Add(2)
@@ -414,7 +420,7 @@ func (c *Client) readLoop(conn *websocket.Conn) {
 	defer c.wg.Done()
 	defer func() {
 		if c.opts.Debug {
-			fmt.Println("readLoop exiting")
+			c.logger.Println("readLoop exiting")
 		}
 	}()
 
@@ -439,7 +445,7 @@ func (c *Client) readLoop(conn *websocket.Conn) {
 				strings.Contains(err.Error(), "broken pipe") ||
 				strings.Contains(err.Error(), "use of closed network connection") {
 				if c.opts.Debug {
-					fmt.Printf("connection lost: %v\n", err)
+					c.logger.Printf("connection lost: %v\n", err)
 				}
 				select {
 				case c.reconnectCh <- struct{}{}:
@@ -452,7 +458,7 @@ func (c *Client) readLoop(conn *websocket.Conn) {
 				return
 			}
 			if c.opts.Debug {
-				fmt.Printf("recv err: %v\n", err)
+				c.logger.Printf("recv err: %v\n", err)
 			}
 			select {
 			case c.errCh <- fmt.Errorf("read message: %w", err):
@@ -461,7 +467,7 @@ func (c *Client) readLoop(conn *websocket.Conn) {
 			continue
 		}
 		if c.opts.Debug {
-			fmt.Printf("recv: %s\n", tryMarshal(msg))
+			c.logger.Printf("recv: %s\n", tryMarshal(msg))
 		}
 
 		if msg.ID != "" {
@@ -482,7 +488,7 @@ func (c *Client) writeLoop(conn *websocket.Conn, messages <-chan *Message) {
 	defer c.wg.Done()
 	defer func() {
 		if c.opts.Debug {
-			fmt.Println("writeLoop exiting")
+			c.logger.Println("writeLoop exiting")
 		}
 	}()
 
@@ -500,18 +506,18 @@ func (c *Client) writeLoop(conn *websocket.Conn, messages <-chan *Message) {
 				return
 			}
 			if c.opts.Debug {
-				fmt.Printf("send: %s\n", tryMarshal(msg))
+				c.logger.Printf("send: %s\n", tryMarshal(msg))
 			}
 			if err := conn.WriteJSON(msg); err != nil {
 				if c.opts.Debug {
-					fmt.Printf("writeLoop error: %v\n", err)
+					c.logger.Printf("writeLoop error: %v\n", err)
 				}
 				return
 			}
 		case <-ticker.C:
 			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second)); err != nil {
 				if c.opts.Debug {
-					fmt.Printf("ping error: %v\n", err)
+					c.logger.Printf("ping error: %v\n", err)
 				}
 				return
 			}
