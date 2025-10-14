@@ -64,9 +64,9 @@ type AppContainerDetail struct {
 	ID           string        `json:"id"`
 	ServiceName  string        `json:"service_name"`
 	Image        string        `json:"image"`
-	PortConfig   []interface{} `json:"port_config"`
+	PortConfig   []AppUsedPort `json:"port_config"`
 	State        string        `json:"state"` // "running", "starting", "exited"
-	VolumeMounts []interface{} `json:"volume_mounts"`
+	VolumeMounts []AppVolume   `json:"volume_mounts"`
 }
 
 // AppVolume represents volume information for the app
@@ -203,9 +203,20 @@ func (a *AppClient) ListWithOptions(ctx context.Context, options *AppQueryOption
 }
 
 // Get returns a specific application by name
-func (a *AppClient) Get(ctx context.Context, name string) (*App, error) {
+func (a *AppClient) Get(ctx context.Context, name string, extra map[string]any) (*App, error) {
 	var result []App
-	err := a.client.Call(ctx, "app.query", []any{[]any{[]any{"name", "=", name}}}, &result)
+
+	params := make([]any, 0, 2)
+
+	// filter by name
+	params = append(params, []any{[]any{"name", "=", name}})
+
+	if len(extra) > 0 {
+		params = append(params, map[string]any{
+			"extra": extra,
+		})
+	}
+	err := a.client.Call(ctx, "app.query", params, &result)
 	if err != nil {
 		return nil, err
 	}

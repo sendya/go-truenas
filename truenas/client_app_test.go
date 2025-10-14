@@ -2,6 +2,7 @@ package truenas
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -68,40 +69,65 @@ func TestApp_StructFields(t *testing.T) {
 	}
 }
 
-// TestAppClient_List is an integration test that requires a live TrueNAS instance
-// Uncomment and set proper environment variables to run integration tests
-func TestAppClient_List(t *testing.T) {
+func TestAppClient_GetApp(t *testing.T) {
+	extra := map[string]any{
+		"host_ip":            "nas.tooko.io",
+		"include_app_schema": true,
+		"retrieve_config":    true,
+	}
+
+	endpoint := "" // put your TrueNAS endpoint here for testing
+	apiKey := ""   // put your TrueNAS API key here for testing
+
+	t.Logf("Using endpoint: %s", endpoint)
+	client, err := NewClient(endpoint, Options{
+		APIKey: apiKey,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	appClient := NewAppClient(client)
+	app, err := appClient.Get(context.Background(), "grafana", extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Logf("app = \n%s", tryMarshal(app))
+}
+
+func ExampleAppClient_List() {
 	endpoint := os.Getenv("TRUENAS_ENDPOINT")
 	apiKey := os.Getenv("TRUENAS_API_KEY")
-	t.Logf("Using endpoint: %s", endpoint)
+	fmt.Printf("Using endpoint: %s", endpoint)
 
 	client, err := NewClient(endpoint, Options{
 		APIKey: apiKey,
 		Debug:  false,
 	})
 	if err != nil {
-		t.Fatal(err)
+		panic(err)
 	}
 	defer client.Close()
 
-	t.Logf("Client connected to %s", endpoint)
+	fmt.Printf("Client connected to %s", endpoint)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	if err := client.App.SubscribeStats(ctx, func(apps []AppStats) error {
 		for _, app := range apps {
-			t.Logf("App: %s, CPU Usage: %.2f%%, Memory: %dMiB \n", app.AppName, app.CPUUsage, app.Memory/1024/1024)
+			fmt.Printf("App: %s, CPU Usage: %.2f%%, Memory: %dMiB \n", app.AppName, app.CPUUsage, app.Memory/1024/1024)
 		}
 		return nil
 	}); err != nil {
-		t.Fatal(err)
+		panic(err)
 	}
 
 	time.Sleep(8 * time.Second)
 
 	if err := client.App.UnsubscribeStats(context.Background()); err != nil {
-		t.Fatal(err)
+		panic(err)
 	}
 
 	time.Sleep(5 * time.Second)
@@ -147,3 +173,6 @@ func ExampleAppClient_QueryByState() {
 	//
 	// fmt.Printf("Found %d running apps\n", len(runningApps))
 }
+
+// Query App details
+// {"jsonrpc":"2.0","id":"a11f55f4-7b9f-2e4e-9cb5-ec4423d13e3b","method":"app.query","params":[[["name","=","grafana"]],{"extra":{"include_app_schema":true,"retrieve_config":true,"host_ip":"nas.tooko.io"}}]}
