@@ -71,7 +71,7 @@ func TestApp_StructFields(t *testing.T) {
 
 func TestAppClient_GetApp(t *testing.T) {
 	extra := map[string]any{
-		"host_ip":            "nas.tooko.io",
+		// "host_ip":            "nas.tooko.io",
 		"include_app_schema": true,
 		"retrieve_config":    true,
 	}
@@ -82,6 +82,7 @@ func TestAppClient_GetApp(t *testing.T) {
 	t.Logf("Using endpoint: %s", endpoint)
 	client, err := NewClient(endpoint, Options{
 		APIKey: apiKey,
+		Debug:  false,
 	})
 	if err != nil {
 		t.Fatal(err)

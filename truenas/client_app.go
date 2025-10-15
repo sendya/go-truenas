@@ -28,14 +28,16 @@ const (
 
 // App represents a TrueNAS application according to official API documentation
 type App struct {
-	Name             string                 `json:"name"`
-	ID               string                 `json:"id"`
-	State            AppState               `json:"state"`
-	UpgradeAvailable bool                   `json:"upgrade_available"`
-	HumanVersion     string                 `json:"human_version"`
-	Version          string                 `json:"version"`
-	Metadata         map[string]interface{} `json:"metadata"`
-	ActiveWorkloads  *AppActiveWorkloads    `json:"active_workloads"`
+	Name              string                 `json:"name"`
+	ID                string                 `json:"id"`
+	State             AppState               `json:"state"`
+	UpgradeAvailable  bool                   `json:"upgrade_available"`
+	HumanVersion      string                 `json:"human_version"`
+	Version           string                 `json:"version"`
+	Metadata          map[string]interface{} `json:"metadata"`
+	ActiveWorkloads   *AppActiveWorkloads    `json:"active_workloads"`
+	AppVersionDetails *AppVersionDetails     `json:"version_details,omitempty"`
+	Config            *map[string]any        `json:"config,omitempty"`
 }
 
 // AppActiveWorkloads represents active workloads according to TrueNAS API documentation
@@ -182,6 +184,16 @@ type AppCreateRequest struct {
 // AppUpdateRequest represents parameters for app.update
 type AppUpdateRequest struct {
 	Values map[string]interface{} `json:"values,omitempty"`
+}
+
+type AppVersionDetails struct {
+	Version      string `json:"version"`
+	HumanVersion string `json:"human_version"`
+	Supported    bool   `json:"supported"`
+	Healthy      bool   `json:"healthy"`
+	HealthyError string `json:"healthy_error,omitempty"`
+	Location     string `json:"location,omitempty"`
+	LastUpdate   string `json:"last_update,omitempty"`
 }
 
 // List returns all applications
